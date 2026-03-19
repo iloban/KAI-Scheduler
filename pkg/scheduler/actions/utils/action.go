@@ -18,6 +18,48 @@ import (
 func GetVictimsQueue(
 	ssn *framework.Session,
 	filter func(*podgroup_info.PodGroupInfo) bool) *JobsOrderByQueues {
+	preemptees := getFilteredVictims(ssn, filter)
+	victimsQueue := NewJobsOrderByQueues(ssn, JobsOrderInitOptions{
+		VictimQueue:       true,
+		MaxJobsQueueDepth: scheduler_util.QueueCapacityInfinite,
+	})
+	victimsQueue.InitializeWithJobs(preemptees)
+	return &victimsQueue
+}
+
+func GetFlatVictimsQueue(
+	ssn *framework.Session,
+	filter func(*podgroup_info.PodGroupInfo) bool) *JobsOrderByQueues {
+	preemptees := getFilteredVictims(ssn, filter)
+	victimsQueue := NewJobsOrderByQueues(ssn, JobsOrderInitOptions{
+		VictimQueue:       true,
+		MaxJobsQueueDepth: scheduler_util.QueueCapacityInfinite,
+	})
+
+	if len(preemptees) == 0 {
+		return &victimsQueue
+	}
+
+	syntheticQueue := &queue_info.QueueInfo{
+		UID:  common_info.QueueID("__flat_victims_queue__"),
+		Name: "__flat_victims_queue__",
+	}
+	leafNode := victimsQueue.createLeafNode(syntheticQueue)
+	for _, job := range preemptees {
+		leafNode.children.Push(job)
+	}
+
+	victimsQueue.queueNodes[syntheticQueue.UID] = leafNode
+	victimsQueue.rootNodes = scheduler_util.NewPriorityQueue(nil, scheduler_util.QueueCapacityInfinite)
+	victimsQueue.rootNodes.Push(leafNode)
+
+	return &victimsQueue
+}
+
+func getFilteredVictims(
+	ssn *framework.Session,
+	filter func(*podgroup_info.PodGroupInfo) bool,
+) map[common_info.PodGroupID]*podgroup_info.PodGroupInfo {
 	preemptees := map[common_info.PodGroupID]*podgroup_info.PodGroupInfo{}
 
 	for _, job := range ssn.ClusterInfo.PodGroupInfos {
@@ -38,12 +80,8 @@ func GetVictimsQueue(
 			preemptees[job.UID] = job
 		}
 	}
-	victimsQueue := NewJobsOrderByQueues(ssn, JobsOrderInitOptions{
-		VictimQueue:       true,
-		MaxJobsQueueDepth: scheduler_util.QueueCapacityInfinite,
-	})
-	victimsQueue.InitializeWithJobs(preemptees)
-	return &victimsQueue
+
+	return preemptees
 }
 
 func GetMessageOfEviction(ssn *framework.Session, actionType framework.ActionType, preempteeTask *pod_info.PodInfo,

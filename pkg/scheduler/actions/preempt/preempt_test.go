@@ -317,6 +317,69 @@ func getTestsMetadata() []integration_tests_utils.TestTopologyMetadata {
 		},
 		{
 			TestTopologyBasic: test_utils.TestTopologyBasic{
+				Name: "1 train job running over quota, 1 build job pending for a sibling queue - preempt across queues",
+				Jobs: []*jobs_fake.TestJobBasic{
+					{
+						Name:                "running_job0",
+						RequiredGPUsPerTask: 1,
+						Priority:            constants.PriorityTrainNumber,
+						QueueName:           "queue0",
+						Tasks: []*tasks_fake.TestTaskBasic{
+							{
+								NodeName: "node0",
+								State:    pod_status.Running,
+							},
+						},
+					}, {
+						Name:                "pending_job0",
+						RequiredGPUsPerTask: 1,
+						Priority:            constants.PriorityBuildNumber,
+						QueueName:           "queue1",
+						Tasks: []*tasks_fake.TestTaskBasic{
+							{
+								State: pod_status.Pending,
+							},
+						},
+					},
+				},
+				Nodes: map[string]nodes_fake.TestNodeBasic{
+					"node0": {
+						GPUs: 1,
+					},
+				},
+				Queues: []test_utils.TestQueueBasic{
+					{
+						Name:         "queue0",
+						DeservedGPUs: 0,
+					},
+					{
+						Name:         "queue1",
+						DeservedGPUs: 1,
+					},
+				},
+				JobExpectedResults: map[string]test_utils.TestExpectedResultBasic{
+					"running_job0": {
+						NodeName:     "node0",
+						GPUsRequired: 1,
+						Status:       pod_status.Releasing,
+					},
+					"pending_job0": {
+						NodeName:     "node0",
+						GPUsRequired: 1,
+						Status:       pod_status.Pipelined,
+					},
+				},
+				Mocks: &test_utils.TestMock{
+					CacheRequirements: &test_utils.CacheMocking{
+						NumberOfCacheBinds:      5,
+						NumberOfCacheEvictions:  1,
+						NumberOfPipelineActions: 1,
+					},
+				},
+			},
+		},
+		{
+			TestTopologyBasic: test_utils.TestTopologyBasic{
 				Name: "2 train jobs running, 1 build job with 2 GPUs pending for the same queue - preempt",
 				Jobs: []*jobs_fake.TestJobBasic{
 					{

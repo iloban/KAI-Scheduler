@@ -131,10 +131,6 @@ func buildFilterFuncForPreempt(ssn *framework.Session, preemptor *podgroup_info.
 			return false
 		}
 
-		if job.Queue != preemptor.Queue {
-			return false
-		}
-
 		// Preempt other jobs
 		if preemptor.UID == job.UID {
 			return false
@@ -148,6 +144,18 @@ func buildFilterFuncForPreempt(ssn *framework.Session, preemptor *podgroup_info.
 			return false
 		}
 
+		if job.Queue == preemptor.Queue {
+			return true
+		}
+
+		if !queuesShareParent(ssn, preemptor.Queue, job.Queue) {
+			return false
+		}
+
+		if !isQueueOverDeservedQuota(ssn, job.Queue) {
+			return false
+		}
+
 		return true
 	}
 }
@@ -155,7 +163,40 @@ func buildFilterFuncForPreempt(ssn *framework.Session, preemptor *podgroup_info.
 func getOrderedVictimsQueue(ssn *framework.Session, preemptor *podgroup_info.PodGroupInfo) solvers.GenerateVictimsQueue {
 	return func() *utils.JobsOrderByQueues {
 		filter := buildFilterFuncForPreempt(ssn, preemptor)
-		victimsQueue := utils.GetVictimsQueue(ssn, filter)
+		victimsQueue := utils.GetFlatVictimsQueue(ssn, filter)
 		return victimsQueue
 	}
+}
+
+func queuesShareParent(ssn *framework.Session, leftQueueID, rightQueueID common_info.QueueID) bool {
+	leftQueue, found := ssn.ClusterInfo.Queues[leftQueueID]
+	if !found {
+		return false
+	}
+
+	rightQueue, found := ssn.ClusterInfo.Queues[rightQueueID]
+	if !found {
+		return false
+	}
+
+	if leftQueue.ParentQueue == "" || rightQueue.ParentQueue == "" {
+		return false
+	}
+
+	return leftQueue.ParentQueue == rightQueue.ParentQueue
+}
+
+func isQueueOverDeservedQuota(ssn *framework.Session, queueID common_info.QueueID) bool {
+	queue, found := ssn.ClusterInfo.Queues[queueID]
+	if !found {
+		return false
+	}
+
+	allocated := ssn.QueueAllocatedResources(queue)
+	deserved := ssn.QueueDeservedResources(queue)
+	if allocated == nil || deserved == nil {
+		return false
+	}
+
+	return !allocated.LessEqual(deserved)
 }
